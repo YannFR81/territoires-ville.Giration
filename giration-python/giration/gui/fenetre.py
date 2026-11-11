@@ -636,6 +636,8 @@ class FenetreGiration(OutilsLot2, QMainWindow):
         self._tout_rafraichir(calcul)
 
     def annuler(self) -> None:
+        if self.carte.mode == "bordure" and self._retour_contrainte():
+            return                                       # pendant le dessin : enlève le dernier point
         p = self.historique.annuler()
         if p is not None:
             self._restaurer_etat(p)
@@ -650,6 +652,7 @@ class FenetreGiration(OutilsLot2, QMainWindow):
 
     def _restaurer_etat(self, p: Projet) -> None:
         self.projet = p
+        self._contrainte = None
         self.selection = None
         self.modifie = True
         self.avant_correction = None
@@ -718,7 +721,8 @@ class FenetreGiration(OutilsLot2, QMainWindow):
 
     def _assurer_geo(self, lat: float, lon: float) -> None:
         """Plan de calcul : Lambert-93 en métropole, plan local orienté au Nord ailleurs (outre-mer)."""
-        if not any(v.points for v in self.projet.variantes):
+        if not any(v.points for v in self.projet.variantes) and not self.projet.contraintes \
+                and not (self._contrainte and self._contrainte["points"]):
             if en_metropole(lat, lon):
                 if self.geo.systeme != "L93":
                     self.geo = Georef("L93")
@@ -751,6 +755,8 @@ class FenetreGiration(OutilsLot2, QMainWindow):
 
     # ================================================================== outils de la carte
     def choisir_mode(self, mode: str) -> None:
+        if mode != "bordure" and self._contrainte and self._contrainte["points"]:
+            self._finir_contrainte(silencieux=True)      # la bordure en cours est gardée si elle est valide
         if mode in ("tracer", "giratoire", "mesurer", "anneau", "bordure") and self.carte.niveau < SEUIL_PHOTO - 0.25:
             self.statusBar().showMessage("Zoomez d'abord jusqu'à la photographie aérienne (molette ou recherche).", 6000)
         self.actions_mode[mode].setChecked(True)
@@ -918,7 +924,7 @@ class FenetreGiration(OutilsLot2, QMainWindow):
         self._changer(f"Rayon du point {i + 1} : {_fr(nouveau)} m")
 
     def _menu_carte(self, d, lat: float, lon: float, pos: QPoint) -> None:
-        if self.carte.mode == "tracer" and d is None:
+        if self.carte.mode == "tracer" and (d is None or d[0] == "contrainte"):
             self.terminer_trace()                         # clic droit : fin de saisie, comme dans AutoCAD
             return
         if self.carte.mode == "bordure" and (d is None or self._contrainte):
@@ -1479,6 +1485,7 @@ class FenetreGiration(OutilsLot2, QMainWindow):
             self._gen_affiche = self._gen
             self.resultat, self.infos, self.trace_saisie, self.au_mieux = None, [], None, None
             self.controle = Controle()
+            self.conflits = []
             self._maj_resultats()
             return
         demande = (self._gen, self._fonction_calcul(self.variante, rapide), "rapide" if rapide else "complet")
@@ -1524,6 +1531,8 @@ class FenetreGiration(OutilsLot2, QMainWindow):
         self._gen_affiche = gen
         if isinstance(res, Exception):
             self.resultat, self.infos = None, []
+            self.conflits = []
+            self._dessiner_lot2()
             self.verdict.setStyleSheet("")
             self.verdict.setText(f"<b>Calcul impossible</b><br>{res}")
             return
@@ -2357,6 +2366,7 @@ class FenetreGiration(OutilsLot2, QMainWindow):
         if not self._confirmer_abandon():
             return
         self.projet = projet_vide(self.variante.vehicule_id)
+        self._contrainte = None
         self.historique = Historique(self.projet)
         self.chemin, self.modifie, self.selection = None, False, None
         self.inactifs.clear()
@@ -2384,6 +2394,7 @@ class FenetreGiration(OutilsLot2, QMainWindow):
             if v.vehicule_id not in self.biblio.vehicules:
                 v.vehicule_id = VEHICULE_DEFAUT
         self.projet = p
+        self._contrainte = None
         self.geo = Georef(p.systeme, tuple(p.origine) if p.origine else None) if (p.systeme or p.origine) else Georef("L93")
         self.historique = Historique(self.projet, "Projet ouvert")
         self.chemin, self.modifie, self.selection = Path(chemin), False, None

@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QPen
+from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGraphicsEllipseItem, QGraphicsPathItem,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMenu, QPushButton, QTableWidget,
                                QTableWidgetItem, QToolButton, QVBoxLayout)
@@ -33,14 +33,31 @@ from .bilan import Bilan, bilan_depuis_mesures, completer, resume, tableau
 from .carte import crayon
 from .contraintes import (TYPES, controler_bati, controler_contraintes, libelle, lire_batiments, nouvelle, valide)
 
-RAYON_BATI = 200.0                                   # m autour du trajet
+RAYON_BATI = 250.0                                   # m autour du point de chargement (comme les routes)
 STYLE = {"bordure": (QColor("#FFFFFF"), Qt.SolidLine), "franchissable": (QColor("#F2C200"), Qt.DashLine),
          "obstacle": (QColor("#E53935"), Qt.SolidLine)}
 NOMS_OUTIL = {"bordure": "Bordure", "franchissable": "Bordure franchissable", "obstacle": "Obstacle"}
 
 
+MAX_BATIMENTS = 1000
+
+
 def url_batiments(lat: float, lon: float, rayon: float = RAYON_BATI) -> str:
-    return _wfs("BDTOPO_V3:batiment", lat, lon, rayon, 500)
+    return _wfs("BDTOPO_V3:batiment", lat, lon, rayon, MAX_BATIMENTS)
+
+
+class _TraitCliquable(QGraphicsPathItem):
+    """Trait dont seule la ligne (quelques pixels) répond à la souris : ni l'intérieur d'une polyligne ouverte, ni
+    une largeur exprimée en unités de la scène."""
+
+    PIXELS = 7.0
+
+    def shape(self):
+        vues = self.scene().views() if self.scene() is not None else []
+        echelle = vues[0].transform().m11() if vues else 1.0
+        st = QPainterPathStroker()
+        st.setWidth(self.PIXELS / max(abs(echelle), 1e-9))
+        return st.createStroke(self.path())
 
 
 class OutilsLot2:
@@ -108,15 +125,20 @@ class OutilsLot2:
         self._dessiner_contrainte_en_cours()
         self._maj_assistant()
 
-    def _finir_contrainte(self, ferme: bool = False) -> bool:
-        """Entrée, double-clic ou clic droit : la contrainte en cours rejoint le projet (annulable)."""
+    def _finir_contrainte(self, ferme: bool = False, silencieux: bool = False) -> bool:
+        """Entrée, double-clic ou clic droit : la contrainte en cours rejoint le projet (annulable). En quittant
+        l'outil (``silencieux``), une contrainte incomplète est abandonnée sans message."""
         c = self._contrainte
         if c is None or not c["points"]:
             return False
         n = nouvelle(c["type"], c["points"], ferme)
         if not valide(n):
-            self.bandeau.afficher("Une bordure demande au moins <b>deux points</b> (un seul point : choisissez "
-                                  "<b>Obstacle</b> pour un poteau).", duree_ms=5000)
+            if silencieux:
+                self._contrainte = None
+                self.carte.vider("elastique")
+            else:
+                self.bandeau.afficher("Une bordure demande au moins <b>deux points</b> (un seul point : choisissez "
+                                      "<b>Obstacle</b> pour un poteau).", duree_ms=5000)
             return False
         self._contrainte = None
         self.carte.vider("elastique")
@@ -195,6 +217,10 @@ class OutilsLot2:
                 self.statusBar().showMessage(f"Bâtiments BD TOPO indisponibles ({erreur}).", 6000)
                 return
             self.batiments = lire_batiments(donnees, self.geo)
+            trouves, rendus = donnees.get("numberMatched"), len(donnees.get("features", []))
+            if isinstance(trouves, int) and trouves > rendus:
+                self.statusBar().showMessage(f"Bâti BD TOPO : {rendus} bâtiments chargés sur {trouves} autour du "
+                                             "trajet ; les plus éloignés ne sont pas contrôlés.", 8000)
             if self.resultat is not None and not self.resultat.rapide:
                 self._controler_lot2(self.resultat)
                 self._maj_resultats()
@@ -275,7 +301,7 @@ class OutilsLot2:
                 continue
             pts = [tuple(q) for q in k["points"]] + ([tuple(k["points"][0])] if k.get("ferme") else [])
             for largeur, couleur, st in ((6, QColor(0, 0, 0, 150), Qt.SolidLine), (3, coul, style)):
-                it = QGraphicsPathItem(self._chemin_ligne(pts, rep))
+                it = _TraitCliquable(self._chemin_ligne(pts, rep))
                 it.setPen(crayon(couleur, largeur, st))
                 it.setData(0, ("contrainte", i))
                 it.setToolTip(aide)
@@ -304,11 +330,32 @@ class OutilsLot2:
             self._complets[cle] = (res, max(am.ecarts) if am is not None and am.ecarts else 0.0)
         return self._complets[cle]
 
+    def _anneau_de(self, pts: list):
+        """Giratoire traversé par une variante (même règle que ``_anneau`` pour la variante active)."""
+        from .saisie import anneau_bdtopo, anneau_site
+        if len(pts) < 2:
+            return None
+        if self.projet.site:
+            a = anneau_site(self.projet.site, self.geo)
+            if a is not None and min(math.dist(a.centre, p) for p in pts) < a.r_ext + 30:
+                return a
+        if not self.routes.vide:
+            for p in pts:
+                a = anneau_bdtopo(self.routes, p, portee=8.0)
+                if a is not None:
+                    return a
+        return None
+
+    def _affiche_a_jour(self) -> bool:
+        """Le résultat affiché est celui de la saisie actuelle (aucun calcul en attente, pas un aperçu)."""
+        return (self.resultat is not None and self._gen <= self._gen_affiche and not self._occupe
+                and not getattr(self.resultat, "rapide", False))
+
     def _bilan(self, i: int) -> Optional[Bilan]:
         v = self.projet.variantes[i]
         if len(v.points) < 2:
             return None
-        actif = i == self.projet.active
+        actif = i == self.projet.active and self._affiche_a_jour()
         if actif:
             res = self.resultat
             ecart = max(self.au_mieux.ecarts) if self.au_mieux and self.au_mieux.ecarts else 0.0
@@ -319,12 +366,14 @@ class OutilsLot2:
         from .saisie import controler
         veh = res.vehicule
         nom_veh = veh.nom_court or veh.nom.split(" — ")[0]
-        ctl = self.controle if actif else controler(self.routes, res.enveloppes.roues, self._anneau())
+        ctl = self.controle if actif else controler(self.routes, res.enveloppes.roues, self._anneau_de(v.points))
         alertes = tuple(a.message for a in res.alertes if a.niveau != "info")
         b = bilan_depuis_mesures(f"{v.nom} — {nom_veh}", veh.nom.split(" — ")[0], res.mesures(),
                                  faisable=res.faisable, couleur=v.couleur, remorques=bool(veh.nb_remorques),
                                  surface=float(res.enveloppes.carrosserie.area), ecart_saisie=ecart, alertes=alertes,
                                  hors=ctl.hors, ilot=ctl.ilot, bande=ctl.bande)
+        b.indice = i
+        b.remarques = [a.message for a in res.alertes if a.niveau != "info"]
         if actif:
             conflits = self.conflits
         else:
@@ -351,7 +400,7 @@ class OutilsLot2:
                                   [("Même trajet, autre véhicule", self.comparer_autre_vehicule),
                                    ("Fermer", lambda: None)])
             return
-        ref = next((j for j, b in enumerate(bs) if b.variante.startswith(self.variante.nom + " ")), 0)
+        ref = next((j for j, b in enumerate(bs) if b.indice == self.projet.active), 0)
         entetes, lignes = tableau(bs, ref)
         d = QDialog(self)
         d.setWindowTitle("Comparer les variantes")
@@ -448,11 +497,11 @@ class OutilsLot2:
         ch = self._fichier_export("Note de giration (PDF)", "pdf", "Documents PDF (*.pdf)")
         if not ch:
             return
-        actif = next((j for j, b in enumerate(bs) if b.variante.startswith(self.variante.nom + " ")), 0)
+        actif = next((j for j, b in enumerate(bs) if b.indice == self.projet.active), 0)
         coord, systeme = self._coordonnees_lieu()
         titre = self.projet.nom or (self.chemin.stem if self.chemin else "Épure de giration")
         d = DonneesNote(titre, bs, actif, lieu="", coordonnees=coord, systeme=systeme, carte=self._image_carte(),
-                        remarques=[a.message for a in self.resultat.alertes if a.niveau != "info"] if self.resultat else [],
+                        remarques=list(bs[actif].remarques),
                         hypotheses=self._hypotheses(),
                         sources=["Photographies aériennes, Plan IGN, BD TOPO (routes, bâtiments) © IGN — Géoplateforme, "
                                  "Licence Ouverte Etalab 2.0",

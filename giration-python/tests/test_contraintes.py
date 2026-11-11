@@ -118,3 +118,48 @@ def test_trajet_qui_traverse_une_bordure(virage):
     assert len(k) == 1 and k[0].traverse and k[0].grave and "traverse" in k[0].message()
     k = _conflits([nouvelle("franchissable", [(15, -5), (15, 5)])], virage)
     assert len(k) == 1 and k[0].traverse and not k[0].grave and "passe sur" in k[0].message()
+
+
+def _droite():
+    """Semi-remorque en ligne droite le long de l'axe des x (roues à ±1,275 m)."""
+    veh = Bibliotheque().get("articule-tracteur-4x2-semi-standard-1360")
+    res = calculer(veh, Trace.depuis_morceaux(0, 0, 0, [(40, None)]))
+    return res, np.column_stack([res.sim.x, res.sim.y])
+
+
+@pytest.fixture(scope="module")
+def droite():
+    return _droite()
+
+
+@pytest.mark.parametrize("points,ferme", [
+    ([(5, -1.0), (30, -1.0)], False),                                    # bordure droite
+    ([(12, -1.5), (12, -1.0), (30, -1.0)], False),                       # retour en L de 0,5 m
+    ([(30, -1.0), (12, -1.0), (12, -1.5)], False),                       # même chose, dessinée à l'envers
+    ([(12, -4), (12, -1.0), (30, -1.0), (30, -4)], False),               # îlot en U dessiné sans le fermer
+    ([(12, -4), (12, -1.0), (30, -1.0), (30, -4), (12.3, -4)], False),   # îlot presque fermé
+    ([(12, -4), (12, -1.0), (30, -1.0), (30, -4)], True),                # le même îlot fermé
+])
+def test_cote_des_coudes(droite, points, ferme):
+    res, axe = droite
+    k = controler_contraintes([nouvelle("bordure", points, ferme)], res.enveloppes.roues, res.enveloppes.carrosserie,
+                              axe)
+    assert len(k) == 1 and not k[0].traverse
+    assert abs(k[0].depassement - (1.275 - 1.0)) < 0.1
+
+
+def test_ilot_etroit_ouvert_sans_faux_conflit(droite):
+    res, axe = droite
+    # îlot de 1 m de large, entre 2 et 3 m de l'axe : les roues (1,275 m) passent à côté
+    ilot = nouvelle("bordure", [(12, -3), (12, -2), (30, -2), (30, -3)])
+    assert controler_contraintes([ilot], res.enveloppes.roues, res.enveloppes.carrosserie, axe) == []
+
+
+def test_contour_degenere_et_batiment_invalide(droite):
+    res, axe = droite
+    aller_retour = nouvelle("bordure", [(12, -1.0), (30, -1.0), (12, -1.0)], ferme=True)   # surface nulle
+    k = controler_contraintes([aller_retour], res.enveloppes.roues, res.enveloppes.carrosserie, axe)
+    assert all(c.depassement < 1.0 for c in k)
+    papillon = Batiment(Polygon([(12, 0.5), (16, 3), (16, 0.5), (12, 3)]).buffer(0))   # nœud papillon réparé
+    k = controler_bati([papillon], res.enveloppes.carrosserie)
+    assert all(math.isfinite(c.depassement) for c in k)

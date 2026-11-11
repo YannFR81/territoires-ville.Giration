@@ -117,3 +117,41 @@ def test_parcours_lot2(fenetre, monkeypatch):
     f.enregistrer()
     f.ouvrir(str(f.chemin))
     assert [c["type"] for c in f.projet.contraintes] == ["franchissable"]
+
+
+def test_points_de_relecture(fenetre):
+    f = fenetre
+    _attendre(f)
+    # Ctrl+Z pendant le dessin enlève le dernier point, pas l'étape précédente
+    n = len(f.projet.contraintes)
+    f.choisir_mode("bordure")
+    f._choisir_type("bordure")
+    for lat, lon in _travers(f, 1, 2, demi=4.0):
+        f._clic_carte(lat, lon)
+    f.annuler()
+    assert len(f._contrainte["points"]) == 1 and len(f.projet.contraintes) == n
+    # changer d'outil garde une bordure valide, abandonne une incomplète sans message
+    f.choisir_mode("modifier")
+    assert f._contrainte is None and len(f.projet.contraintes) == n
+    f.choisir_mode("bordure")
+    for lat, lon in _travers(f, 1, 2, demi=4.0):
+        f._clic_carte(lat, lon)
+    f.choisir_mode("modifier")
+    _attendre(f)
+    assert len(f.projet.contraintes) == n + 1 and f.conflits
+    # le trait d'une bordure ne répond qu'à quelques pixels autour de la ligne
+    from giration.gui.outils_lot2 import _TraitCliquable
+    traits = [it for it in f.carte.calques.get("contraintes", []) if isinstance(it, _TraitCliquable)]
+    px = 1.0 / abs(f.carte.transform().m11())                          # unités de scène par pixel
+    for it in traits:
+        forme, chemin = it.shape().boundingRect(), it.path().boundingRect()
+        assert forme.height() <= chemin.height() + 10 * px and forme.width() <= chemin.width() + 10 * px
+        milieu = chemin.center()
+        assert not it.shape().contains(milieu) or chemin.height() < 10 * px or chemin.width() < 10 * px
+    # trajet effacé : plus de conflit affiché
+    f.effacer_trace()
+    _attendre(f)
+    assert f.resultat is None and f.conflits == []
+    f.annuler()
+    _attendre(f)
+    assert f.resultat is not None

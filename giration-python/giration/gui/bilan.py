@@ -52,6 +52,8 @@ class Bilan:
     bande: float = 0.0                         # m : roues sur la bande franchissable
     conflits: list = field(default_factory=list)   # messages (bordures, obstacles, bâti)
     raisons: list = field(default_factory=list)    # pourquoi réserve ou impossible
+    indice: int = -1                           # rang de la variante dans le projet
+    remarques: list = field(default_factory=list)  # alertes du calcul (attention, erreur)
 
     @property
     def libelle(self) -> str:

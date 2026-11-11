@@ -37,7 +37,7 @@ NOMS_COURTS = {"bordure": "bordure", "franchissable": "bordure franchissable", "
 GRAVES = ("bordure", "obstacle")                # conflit → impossible ; sinon (franchissable, bâti BD TOPO) → réserve
 TOLERANCE = 0.02                                # m : en deçà, contact négligé
 RAYON_POTEAU = 0.15                             # m : obstacle d'un seul point
-PORTEE_COTE = 40.0                              # m : demi-largeur de la zone où l'on juge le côté d'une ligne
+PORTEE_COTE = 8.0                               # m : profondeur de la zone interdite derrière une bordure ouverte
 
 
 @dataclass
@@ -87,8 +87,22 @@ def geometrie(c: dict) -> BaseGeometry:
         return Point(pts[0]).buffer(RAYON_POTEAU, 16)
     if c.get("ferme") and len(pts) >= 3:
         poly = Polygon(pts)
-        return poly if poly.is_valid else shapely.make_valid(poly)
+        if poly.is_valid:
+            return poly
+        parts = _polygones(shapely.make_valid(poly), 0.01)
+        return shapely.union_all(parts) if parts else LineString(pts + [pts[0]])     # contour dégénéré : ligne
     return LineString(pts)
+
+
+def _polygones(g: BaseGeometry, aire_min: float = 0.0) -> list:
+    """Parties polygonales d'une géométrie (make_valid peut rendre des lignes ou une collection)."""
+    res = []
+    for q in getattr(g, "geoms", [g]):
+        if q.geom_type == "Polygon" and q.area > aire_min:
+            res.append(q)
+        elif q.geom_type == "MultiPolygon":
+            res += [r for r in q.geoms if r.area > aire_min]
+    return res
 
 
 def longueur(c: dict) -> float:
@@ -119,26 +133,72 @@ def _profondeur(zone: BaseGeometry, bord: BaseGeometry) -> tuple[float, float, f
     return float(d[k]), float(xy[k, 0]), float(xy[k, 1])
 
 
-def _cote_interdit(ligne: LineString, axe: np.ndarray) -> Optional[BaseGeometry]:
-    """Demi-zone (bande de PORTEE_COTE m) du côté de la ligne où le véhicule ne roule pas."""
-    gauche = ligne.buffer(PORTEE_COTE, single_sided=True)
-    droite = ligne.buffer(-PORTEE_COTE, single_sided=True)
+def _cote_vehicule(c: np.ndarray, axe: np.ndarray, pts) -> Optional[bool]:
+    """True si le véhicule roule à gauche de la polyligne (sens de dessin), False à droite, None si indécidable.
+
+    Une bordure continue a son côté interdit toujours du même côté de son sens de dessin : on vote sur les segments
+    longés par le trajet (point du trajet le plus proche projeté à l'intérieur du segment), pondérés par leur
+    longueur et leur proximité ; sans segment longé, on prend le point du trajet le plus proche de la ligne."""
+    vote, repli = 0.0, None
+    for a, b in zip(c[:-1], c[1:]):
+        L = math.dist(a, b)
+        if L < 1e-6:
+            continue
+        seg = LineString([a, b])
+        d = shapely.distance(pts, seg)
+        k = int(np.argmin(d))
+        t = (b - a) / L
+        v = np.asarray(axe[k]) - a
+        u = float(v @ t)
+        croix = t[0] * v[1] - t[1] * v[0]
+        if 0.0 < u < L and abs(croix) > 1e-6:
+            vote += math.copysign(L / (float(d[k]) + 1.0), croix)
+        elif repli is None or float(d[k]) < repli[0]:
+            w = np.asarray(axe[k]) - (a + b) / 2                 # depuis le milieu : évite l'alignement exact
+            cr = t[0] * w[1] - t[1] * w[0]
+            if abs(cr) > 1e-6:
+                repli = (float(d[k]), cr > 0)
+    if vote:
+        return vote > 0
+    return repli[1] if repli else None
+
+
+def _cote_interdit(ligne: BaseGeometry, axe: np.ndarray, largeur: float = PORTEE_COTE) -> Optional[BaseGeometry]:
+    """Zone interdite derrière une bordure ouverte : une bande de ``largeur`` m par segment, du côté opposé au
+    véhicule (décidé pour toute la polyligne, voir ``_cote_vehicule``), avec les coins extérieurs des coudes
+    comblés. Les parties de bande qui passent de l'autre côté d'un segment voisin (îlot étroit, retour en U) sont
+    retirées."""
     if not len(axe):
         return None
     pts = shapely.points(axe)
-    n_g = int(np.count_nonzero(shapely.contains(gauche, pts)))
-    n_d = int(np.count_nonzero(shapely.contains(droite, pts)))
-    if n_g == n_d == 0:                              # trajet loin de la ligne : point du trajet le plus proche
-        k = int(np.argmin(shapely.distance(pts, ligne)))
-        p = Point(axe[k])
-        s = ligne.project(p)
-        q = ligne.interpolate(s)
-        q2 = ligne.interpolate(min(ligne.length, s + 0.1))
-        q1 = ligne.interpolate(max(0.0, s - 0.1))
-        tx, ty = q2.x - q1.x, q2.y - q1.y
-        n_g = 1 if tx * (p.y - q.y) - ty * (p.x - q.x) > 0 else 0
-        n_d = 1 - n_g
-    return droite if n_g >= n_d else gauche
+    interdits, permis = [], []
+    for partie in getattr(ligne, "geoms", [ligne]):
+        c = np.asarray(partie.coords)[:, :2]
+        gauche = _cote_vehicule(c, axe, pts)
+        if gauche is None:
+            continue
+        sens = -1.0 if gauche else 1.0                         # buffer single_sided : > 0 à gauche, < 0 à droite
+        precedent = None
+        for a, b in zip(c[:-1], c[1:]):
+            L = math.dist(a, b)
+            if L < 1e-6:
+                continue
+            seg = LineString([a, b])
+            interdits.append(seg.buffer(sens * largeur, single_sided=True))
+            permis.append(seg.buffer(-sens * largeur, single_sided=True))
+            t = (b - a) / L
+            n = np.array([-t[1], t[0]]) * sens                 # normale vers le côté interdit
+            if precedent is not None and np.allclose(precedent[0], a):
+                coin = Polygon([a, a + largeur * precedent[1], a + largeur * (precedent[1] + n), a + largeur * n])
+                if coin.is_valid and coin.area > 1e-6:
+                    interdits.append(coin)
+            precedent = (b, n)
+    if not interdits:
+        return None
+    zone = shapely.union_all(interdits)
+    if permis:
+        zone = zone.difference(shapely.union_all(permis))
+    return zone if not zone.is_empty else None
 
 
 def controler_contrainte(c: dict, i: int, roues: BaseGeometry, caisse: BaseGeometry, axe: np.ndarray) -> Optional[Conflit]:
@@ -171,10 +231,10 @@ def controler_contrainte(c: dict, i: int, roues: BaseGeometry, caisse: BaseGeome
         zone = emprise.intersection(interdit)
         bord = g
     zone = shapely.make_valid(zone)
-    zone = shapely.union_all([p for p in getattr(zone, "geoms", [zone]) if p.geom_type == "Polygon" and p.area > 0.002]) \
-        if not zone.is_empty else zone
-    if zone.is_empty:
+    parts = _polygones(zone, 0.002) if not zone.is_empty else []
+    if not parts:
         return None
+    zone = shapely.union_all(parts)
     d, x, y = _profondeur(zone, bord)
     if len(c["points"]) == 1:                       # poteau : enfoncement mesuré depuis son centre
         ctr = Point(c["points"][0])
@@ -226,7 +286,10 @@ def lire_batiments(donnees: dict, geo) -> list[Batiment]:
             except (ValueError, ZeroDivisionError):
                 continue
             if not pg.is_valid:
-                pg = shapely.make_valid(pg)
+                parts = _polygones(shapely.make_valid(pg), 0.01)
+                if not parts:
+                    continue
+                pg = shapely.union_all(parts)
             if pg.is_empty or pg.area < 1.0:
                 continue
             try:

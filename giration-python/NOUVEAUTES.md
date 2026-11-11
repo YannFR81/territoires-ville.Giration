@@ -21,6 +21,11 @@ Lot 2 des principes de fonctionnement : les limites relevées sur la photo font 
   et blocs par similitude locale (écart inférieur au millimètre, vérifié contre PROJ) ; bordures et obstacles sur
   les calques GIR_BORDURES, GIR_BORDURES_FRANCHISSABLES, GIR_OBSTACLES.
 - La note et le DXF donnent aussi les coordonnées CC du lieu.
+- Pendant le dessin d'une bordure, Ctrl+Z enlève le dernier point ; Échap ou un changement d'outil gardent la
+  bordure si elle a au moins deux points (comme la polyligne d'AutoCAD).
+- Relecture indépendante avant livraison : côté interdit d'une bordure jugé sur toute la polyligne (coudes,
+  retours en L, îlots dessinés sans être fermés), clic droit précis sur les bordures, conflits effacés avec le
+  trajet, comparaison toujours faite sur le dernier calcul et avec le giratoire de chaque variante.
 
 ## 1.2.1 — 11 octobre 2026
 
