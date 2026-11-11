@@ -1,0 +1,51 @@
+GIRATION 1.3.0 - épures de giration (portage du logiciel Giration du CERTU/CEREMA)
+L'intelligence artificielle au service de l'action publique efficiente.
+
+APPLICATION DE BUREAU : Giration.exe (double-clic)
+1. Chercher la commune ou l'adresse, ou zoomer à la molette jusqu'à la photo aérienne (bouton « Photo 20 cm »).
+2. Choisir le véhicule (panneau de gauche).
+3. Tracer (touche T) : cliquer le départ dans la voie d'arrivée, puis les points de passage du milieu de l'essieu
+   avant. Le trajet passe par vos clics. Rester au-delà du pointillé rouge (limite du braquage).
+   Giratoire (touche G) : cliquer la branche d'entrée, puis la branche de sortie.
+4. Entrée (ou double-clic, ou clic droit) : fin de saisie. Le départ et l'arrivée se placent au milieu de la voie
+   de droite, puis les corrections du véhicule s'appliquent. Aucun point n'est déplacé : Ctrl+Z rend la saisie.
+5. Mesurer (touche M) : deux clics d'un bord de la chaussée à l'autre corrigent la largeur et l'axe de la route
+   (la BD TOPO est une estimation, la photo fait foi).
+6. Anneau (touche A) : si l'anneau de la BD TOPO est décalé de la photo, relevez le giratoire : 3 clics sur la
+   bordure extérieure, 1 clic sur le bord intérieur de la chaussée, 1 clic sur le bord de l'îlot (Entrée s'il n'y a
+   pas de bande franchissable). Il remplace celui de la BD TOPO ; l'outil Giratoire prend alors vos deux clics au
+   milieu des voies. Fichier > Enregistrer l'anneau pour Girabase : fichier .gsite.
+7. Bordure (touche B) : relever sur la photo les bordures (les roues ne les franchissent pas), les bordures
+   franchissables et bateaux (réserve), les obstacles - murs, poteaux (la caisse ne doit pas les toucher).
+   Clic par clic, Entrée pour finir, clic sur le premier point pour fermer ; flèche du bouton : type.
+   Les bâtiments de la BD TOPO sont aussi contrôlés (réserve ; menu Couches).
+8. Comparer : variantes côte à côte ; Édition > Même trajet, autre véhicule.
+9. Exporter : DXF en Lambert-93 ou CC44 (AutoCAD, COVADIS) avec les bordures et obstacles ; note de giration
+   en PDF ; KML, GeoJSON.
+Une connexion Internet est nécessaire pour la carte et les routes de l'IGN.
+
+LIGNE DE COMMANDE : giration.exe (à partir d'un DXF, comme la version 0.1)
+
+UTILISATION
+1. Dans AutoCAD, dessiner le trajet du MILIEU DE L'ESSIEU AVANT en polyligne (calque GIR_AXE conseillé).
+   Le sens de la polyligne est le sens de marche. Arcs : option Arc de PLINE ou commande RACCORD.
+2. Enregistrer en DXF (AutoCAD 2000 ou plus récent), dessin en mètres.
+3. Glisser le DXF sur giration.exe, puis répondre aux questions :
+   - le véhicule : un numéro de la liste, ou un mot pour chercher (semi, bus, BOM, pompiers…) ;
+   - le rayon de raccord, si la polyligne a des angles vifs ;
+   - le style de conduite.
+4. À côté du DXF, on obtient :
+   - "<plan> - giration.dxf" : le plan d'origine avec les épures, calques GIR_<véhicule>_… ;
+   - .kml (Google Earth) et .geojson (QGIS), si le plan est en Lambert-93 ou en CC ;
+   - .json (projet complet) et .txt (compte rendu).
+
+Au premier lancement, Windows SmartScreen peut bloquer l'exécutable, qui n'est pas signé :
+cliquer sur « Informations complémentaires », puis sur « Exécuter quand même ».
+
+EN LIGNE DE COMMANDE
+  giration.exe vehicules bus
+  giration.exe calculer plan.dxf -v certu-camion-semi-remorque -v certu-bus --raccord 12
+  giration.exe valider        (contrôles de précision)
+
+BANC D'ESSAI COVADIS : voir le dossier banc-essai-covadis et sa fiche PDF.
+Licence GNU GPL v3. Ce portage n'est ni édité ni validé par le CEREMA.
