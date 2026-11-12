@@ -32,8 +32,9 @@ def test_validite_et_libelle():
     assert valide(nouvelle("bordure", [(0, 0), (5, 0)]))
     assert not valide(nouvelle("bordure", [(0, 0)]))
     assert valide(nouvelle("obstacle", [(0, 0)]))                  # poteau
-    assert libelle(nouvelle("obstacle", [(1, 1)])) == "poteau"
-    assert libelle(nouvelle("bordure", [(0, 0), (3, 4)])) == "bordure, 5,0 m"
+    assert libelle(nouvelle("obstacle", [(1, 1)])) == "obstacle ponctuel"
+    assert libelle(nouvelle("obstacle", [(0, 0), (4, 0)])).startswith("bordure haute ou mur, 4,0 m")
+    assert libelle(nouvelle("bordure", [(0, 0), (3, 4)])) == "bordure basse, 5,0 m"
     with pytest.raises(ValueError):
         nouvelle("trottoir", [(0, 0), (1, 1)])
 

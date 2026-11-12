@@ -36,7 +36,11 @@ from .contraintes import (TYPES, controler_bati, controler_contraintes, libelle,
 RAYON_BATI = 250.0                                   # m autour du point de chargement (comme les routes)
 STYLE = {"bordure": (QColor("#FFFFFF"), Qt.SolidLine), "franchissable": (QColor("#F2C200"), Qt.DashLine),
          "obstacle": (QColor("#E53935"), Qt.SolidLine)}
-NOMS_OUTIL = {"bordure": "Bordure", "franchissable": "Bordure franchissable", "obstacle": "Obstacle"}
+NOMS_OUTIL = {"bordure": "Bordure basse", "obstacle": "Bordure haute ou mur", "ponctuel": "Obstacle ponctuel",
+              "franchissable": "Bordure franchissable"}
+CHOIX_OUTIL = [("bordure", TYPES["bordure"]), ("obstacle", TYPES["obstacle"]),
+               ("ponctuel", "Obstacle ponctuel : poteau, mât, borne (un clic par obstacle)"),
+               ("franchissable", TYPES["franchissable"])]
 
 
 MAX_BATIMENTS = 1000
@@ -65,6 +69,7 @@ class OutilsLot2:
     def _init_lot2(self) -> None:
         """À appeler au début de ``FenetreGiration.__init__`` (avant la construction des barres d'outils)."""
         self.type_contrainte = "bordure"
+        self._ponctuel = False                           # outil « obstacle ponctuel » : un clic, un obstacle
         self._contrainte: Optional[dict] = None          # contrainte en cours de dessin
         self.batiments: list = []
         self.zone_bati: Optional[tuple] = None
@@ -75,9 +80,9 @@ class OutilsLot2:
         """Bouton « Bordure B » de la barre Giration, avec le choix du type (flèche)."""
         a = QAction("Bordure  B", self)
         a.setCheckable(True)
-        a.setToolTip("Dessiner sur la photo une bordure (les roues ne la franchissent pas), une bordure franchissable "
-                     "ou un obstacle (mur, poteau) : clic par clic, Entrée pour finir, clic sur le premier point pour "
-                     "fermer (B)")
+        a.setToolTip("Dessiner sur la photo une bordure basse (le porte-à-faux passe, pas les roues), une bordure "
+                     "haute ou un mur (rien ne passe), un obstacle ponctuel ou une bordure franchissable : clic par "
+                     "clic, Entrée pour finir, clic sur le premier point pour fermer (B)")
         a.triggered.connect(lambda _=False: self.choisir_mode("bordure"))
         groupe.addAction(a)
         self.actions_mode["bordure"] = a
@@ -87,7 +92,7 @@ class OutilsLot2:
         m = QMenu(bt)
         g = QActionGroup(m)
         self.actions_type = {}
-        for code, texte in TYPES.items():
+        for code, texte in CHOIX_OUTIL:
             t = m.addAction(texte)
             t.setCheckable(True)
             t.setChecked(code == self.type_contrainte)
@@ -100,17 +105,26 @@ class OutilsLot2:
         tb.addWidget(bt)
 
     def _choisir_type(self, code: str) -> None:
-        self.type_contrainte = code
+        """``code`` : bordure, obstacle, franchissable, ou ponctuel (obstacle d'un seul point, un clic suffit)."""
+        if code == "ponctuel" and self._contrainte and self._contrainte["points"]:
+            self._finir_contrainte(silencieux=True)
+        self._ponctuel = code == "ponctuel"
+        self.type_contrainte = "obstacle" if self._ponctuel else code
         self.actions_type[code].setChecked(True)
         self.actions_mode["bordure"].setText(f"{NOMS_OUTIL[code]}  B")
         if self._contrainte is not None:
-            self._contrainte["type"] = code
+            self._contrainte["type"] = self.type_contrainte
         self.choisir_mode("bordure")
+        self._maj_assistant()
 
     # ================================================================== outil Bordure
     def _clic_bordure(self, lat: float, lon: float) -> None:
         self._assurer_geo(lat, lon)
         p = list(self._plan(lat, lon))
+        if self._ponctuel:                               # obstacle ponctuel : placé d'un clic
+            self.projet.contraintes.append(nouvelle("obstacle", [p]))
+            self._changer("Obstacle ponctuel placé")
+            return
         c = self._contrainte
         if c is None:
             c = self._contrainte = {"type": self.type_contrainte, "points": []}
@@ -138,7 +152,7 @@ class OutilsLot2:
                 self.carte.vider("elastique")
             else:
                 self.bandeau.afficher("Une bordure demande au moins <b>deux points</b> (un seul point : choisissez "
-                                      "<b>Obstacle</b> pour un poteau).", duree_ms=5000)
+                                      "<b>Obstacle ponctuel</b>, flèche du bouton).", duree_ms=5000)
             return False
         self._contrainte = None
         self.carte.vider("elastique")
@@ -187,7 +201,9 @@ class OutilsLot2:
             return
         c = cs[i]
         for code, texte in NOMS_OUTIL.items():
-            if code != c["type"] and (len(c["points"]) > 1 or code == "obstacle"):
+            if code == "ponctuel":
+                continue
+            if code != c["type"] and len(c["points"]) > 1:
                 m.addAction(f"Changer en {texte.lower()}").triggered.connect(
                     lambda _=False, k=code: self._changer_type_contrainte(i, k))
         m.addAction(f"Supprimer ({libelle(c)})").triggered.connect(lambda: self._supprimer_contrainte(i))
@@ -307,13 +323,15 @@ class OutilsLot2:
                 it.setToolTip(aide)
                 c.ajouter("contraintes", it, 25)
         for k in self.conflits:
-            if k.zone is None or k.zone.is_empty:
-                continue
-            it = QGraphicsPathItem(self._chemin_poly(k.zone, rep))
-            rouge = k.grave
-            it.setPen(crayon(QColor("#E53935") if rouge else QColor("#E8730C"), 1.6))
-            it.setBrush(QBrush(QColor(229, 57, 53, 150) if rouge else QColor(232, 115, 12, 120)))
-            c.ajouter("contraintes", it, 27)
+            if k.zone is not None and not k.zone.is_empty:
+                it = QGraphicsPathItem(self._chemin_poly(k.zone, rep))
+                rouge = k.grave
+                it.setPen(crayon(QColor("#E53935") if rouge else QColor("#E8730C"), 1.6))
+                it.setBrush(QBrush(QColor(229, 57, 53, 150) if rouge else QColor(232, 115, 12, 120)))
+                c.ajouter("contraintes", it, 27)
+            if math.isfinite(k.x) and math.isfinite(k.y):   # valeur du conflit à l'endroit le plus engagé
+                texte = "traverse" if k.traverse else f"{k.depassement:.2f} m".replace(".", ",")
+                self._bulle(texte, rep.point(k.x, k.y), "impossible" if k.grave else "limite", "contraintes")
 
     # ================================================================== comparaison
     def _resultat_complet(self, v):

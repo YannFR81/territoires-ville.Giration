@@ -83,14 +83,19 @@ def test_parcours_lot2(fenetre, monkeypatch):
     f._changer_type_contrainte(0, "franchissable")
     _attendre(f)
     assert "réserves" in f.verdict.text()
-    # poteau sur le trajet, puis annulation
-    f._choisir_type("obstacle")
+    # obstacle ponctuel sur le trajet : un clic suffit ; puis annulation
+    f._choisir_type("ponctuel")
     lat, lon = f.geo.vers_geo(*f.variante.points[-1])
     f._clic_carte(lat, lon)
-    f.terminer_trace()
     _attendre(f)
     assert [c["type"] for c in f.projet.contraintes] == ["franchissable", "obstacle"]
-    assert any(k.type == "obstacle" for k in f.conflits)
+    assert len(f.projet.contraintes[-1]["points"]) == 1
+    k = next(k for k in f.conflits if k.type == "obstacle")
+    assert k.ponctuel and "obstacle ponctuel" in k.message()
+    # chaque conflit est surligné avec sa valeur (D13)
+    from giration.gui.carte import Etiquette
+    assert sum(isinstance(it, Etiquette) for it in f.carte.calques.get("contraintes", [])) == len(f.conflits)
+    f._choisir_type("bordure")
     f.choisir_mode("modifier")
     f.annuler()
     _attendre(f)

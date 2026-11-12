@@ -2,12 +2,13 @@
 
 Sans dépendance à Qt : testable seul. Coordonnées du plan de calcul (Lambert-93 en métropole), en mètres.
 
-Trois sortes de contraintes se dessinent sur la photo (la photo fait foi) :
+Les contraintes se dessinent sur la photo (la photo fait foi), selon la décision D13 des principes :
 
-- **bordure** : bordure de trottoir ou d'îlot, que les roues ne franchissent pas ; la caisse peut passer au-dessus
-  (porte-à-faux) ;
-- **franchissable** : bordure basse, bateau, bande franchissable : les roues peuvent y monter, à confirmer (réserve) ;
-- **obstacle** : mur, façade, clôture, poteau, mât, panneau : rien du véhicule ne doit le toucher.
+- **bordure** — *bordure basse* : bordure de trottoir ou d'îlot ; le porte-à-faux passe au-dessus, pas les roues ;
+- **obstacle** — *bordure haute ou mur* (ligne ou contour) et *obstacle ponctuel* (un seul point : poteau, mât,
+  borne) : rien du véhicule ne passe ;
+- **franchissable** : bateau, bordure ou bande franchissable : les roues peuvent y monter, à confirmer (réserve,
+  comme la bande franchissable d'un giratoire, décision D9).
 
 Une contrainte est une polyligne, un contour fermé, ou un seul point (poteau). Pour une ligne ouverte, le côté
 interdit est celui où ne roule pas le véhicule (déduit de son trajet) ; pour un contour fermé de bordure, l'intérieur
@@ -29,11 +30,12 @@ from shapely import LineString, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 
 TYPES = {
-    "bordure": "Bordure de trottoir ou d'îlot (les roues ne la franchissent pas)",
-    "franchissable": "Bordure franchissable, bateau (les roues peuvent y monter : réserve)",
-    "obstacle": "Obstacle : mur, façade, clôture, poteau (rien ne doit le toucher)",
+    "bordure": "Bordure basse : le porte-à-faux passe, pas les roues",
+    "obstacle": "Bordure haute ou mur : rien ne passe",
+    "franchissable": "Bordure franchissable, bateau : les roues peuvent y monter (réserve)",
 }
-NOMS_COURTS = {"bordure": "bordure", "franchissable": "bordure franchissable", "obstacle": "obstacle", "bati": "bâtiment"}
+NOMS_COURTS = {"bordure": "bordure basse", "franchissable": "bordure franchissable", "obstacle": "bordure haute ou mur",
+               "bati": "bâtiment"}
 GRAVES = ("bordure", "obstacle")                # conflit → impossible ; sinon (franchissable, bâti BD TOPO) → réserve
 TOLERANCE = 0.02                                # m : en deçà, contact négligé
 RAYON_POTEAU = 0.15                             # m : obstacle d'un seul point
@@ -49,6 +51,7 @@ class Conflit:
     y: float
     zone: BaseGeometry           # partie de l'emprise en conflit (dessin)
     traverse: bool = False       # le trajet lui-même coupe la ligne : le véhicule doit la franchir
+    ponctuel: bool = False       # obstacle d'un seul point
 
     @property
     def grave(self) -> bool:
@@ -56,16 +59,18 @@ class Conflit:
 
     def message(self) -> str:
         if self.traverse:
-            return {"bordure": "Le trajet traverse une bordure : le véhicule devrait la franchir",
+            return {"bordure": "Le trajet traverse une bordure basse : les roues devraient la franchir",
                     "franchissable": "Le trajet passe sur la bordure franchissable",
-                    "obstacle": "Le trajet traverse un obstacle"}.get(self.type, "Le trajet traverse une contrainte")
+                    "obstacle": "Le trajet traverse une bordure haute ou un mur"}.get(self.type,
+                                                                                  "Le trajet traverse une contrainte")
         d = f"{self.depassement:.2f}".replace(".", ",")
         if self.type == "bordure":
-            return f"Les roues franchissent une bordure de {d} m"
+            return f"Les roues franchissent une bordure basse de {d} m"
         if self.type == "franchissable":
             return f"Les roues montent sur la bordure franchissable ({d} m)"
         if self.type == "obstacle":
-            return f"La caisse touche un obstacle ({d} m)"
+            quoi = "un obstacle ponctuel" if self.ponctuel else "une bordure haute ou un mur"
+            return f"La caisse touche {quoi} ({d} m)"
         return (f"La caisse touche un bâtiment de la BD TOPO ({d} m) : vérifiez sur la photo (précision de quelques "
                 "mètres), ou dessinez l'obstacle")
 
@@ -116,7 +121,7 @@ def longueur(c: dict) -> float:
 def libelle(c: dict) -> str:
     n = len(c["points"])
     if n == 1:
-        return "poteau"
+        return "obstacle ponctuel"
     nom = NOMS_COURTS[c["type"]]
     if c.get("ferme"):
         nom += " (contour fermé)"
@@ -245,7 +250,7 @@ def controler_contrainte(c: dict, i: int, roues: BaseGeometry, caisse: BaseGeome
         x, y = zone.representative_point().x, zone.representative_point().y
     if d <= TOLERANCE:
         return None
-    return Conflit(c["type"], i, d, x, y, zone)
+    return Conflit(c["type"], i, d, x, y, zone, ponctuel=len(c["points"]) == 1)
 
 
 def controler_contraintes(contraintes: list, roues: BaseGeometry, caisse: BaseGeometry, axe) -> list[Conflit]:

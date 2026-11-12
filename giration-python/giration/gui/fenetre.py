@@ -1871,16 +1871,19 @@ class FenetreGiration(OutilsLot2, QMainWindow):
                      "Cliquez la <b>branche d'entrée</b> du giratoire, sur la route d'arrivée. Si la BD TOPO est "
                      "décalée de la photo, relevez d'abord l'anneau (A).")
         elif c.mode == "bordure":
-            nom = {"bordure": "la bordure", "franchissable": "la bordure franchissable",
-                   "obstacle": "l'obstacle"}[self.type_contrainte]
+            nom = {"bordure": "la bordure basse", "franchissable": "la bordure franchissable",
+                   "obstacle": "la bordure haute ou le mur"}[self.type_contrainte]
             k = self._contrainte
-            if k and k["points"]:
+            if self._ponctuel:
+                t = ("Cliquez chaque <b>obstacle ponctuel</b> (poteau, mât, borne) sur la photo : un clic, un obstacle. "
+                     "Rien du véhicule ne doit le toucher.")
+            elif k and k["points"]:
                 t = (f"Continuez {nom} point par point · <b>Entrée</b>, double-clic ou clic droit : terminer · clic sur le "
                      "premier point : fermer le contour · Retour arrière : enlever le dernier point.")
             else:
-                t = (f"Cliquez {nom} sur la photo, point par point (un seul point puis Entrée : un poteau). Flèche du "
-                     "bouton « Bordure » : bordure franchissable ou obstacle. Les roues ne franchissent pas une bordure ; "
-                     "la caisse ne touche pas un obstacle.")
+                t = (f"Cliquez {nom} sur la photo, point par point. Flèche du bouton : bordure basse (le porte-à-faux "
+                     "passe, pas les roues), bordure haute ou mur (rien ne passe), obstacle ponctuel, bordure "
+                     "franchissable (réserve).")
         elif c.mode == "mesurer":
             t = ("Cliquez l'<b>autre bord</b> de la chaussée." if self._mesure_a else
                  "Cliquez un <b>bord de la chaussée</b> sur la photo, puis le bord opposé : la largeur mesurée peut "
@@ -2516,11 +2519,12 @@ class FenetreGiration(OutilsLot2, QMainWindow):
             "(Entrée s'il n'y a pas de bande franchissable). Il remplace l'anneau de la BD TOPO ; ses poignées "
             "l'ajustent ; Fichier > Enregistrer l'anneau pour Girabase l'écrit en .gsite. L'outil Giratoire prend "
             "alors vos clics au milieu des voies.\n\n"
-            "8. Bordure (B) : relevez sur la photo les bordures (les roues ne les franchissent pas : ne passe pas), "
-            "les bordures franchissables et bateaux (réserve) et les obstacles — murs, poteaux, clôtures (la caisse ne "
-            "doit pas les toucher). Clic par clic, Entrée pour finir, clic sur le premier point pour fermer ; la flèche "
-            "du bouton choisit le type ; clic droit sur une bordure pour la changer ou la supprimer. Les bâtiments de la "
-            "BD TOPO sont contrôlés aussi (réserve, précision de quelques mètres ; menu Couches).\n\n"
+            "8. Bordure (B) : relevez sur la photo les bordures basses (le porte-à-faux passe, pas les roues), les "
+            "bordures hautes et murs (rien ne passe), les obstacles ponctuels — poteaux, mâts, bornes (un clic chacun) "
+            "— et les bordures franchissables ou bateaux (réserve). Clic par clic, Entrée pour finir, clic sur le "
+            "premier point pour fermer ; la flèche du bouton choisit le type ; clic droit sur une bordure pour la "
+            "changer ou la supprimer. Chaque conflit est surligné sur la carte avec sa valeur. Les bâtiments de la BD "
+            "TOPO sont contrôlés aussi (réserve, précision de quelques mètres ; menu Couches).\n\n"
             "9. Comparer : les variantes côte à côte (emprises, braquage, vitesse, conflits). « Même trajet, autre "
             "véhicule » copie la variante et change le véhicule.\n\n"
             "10. Exporter : DXF en Lambert-93 ou dans la zone CC du lieu (CC44 dans le Tarn), avec les bordures et "
