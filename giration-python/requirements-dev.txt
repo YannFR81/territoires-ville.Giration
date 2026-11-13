@@ -1,0 +1,6 @@
+# Application de bureau, tests, aperçus et compilation
+PySide6-Essentials==6.9.3
+pytest==9.1.1
+matplotlib
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

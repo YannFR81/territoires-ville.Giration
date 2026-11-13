@@ -1,0 +1,5 @@
+# Dépendances du moteur et des exports (versions de l'exécutable Windows 10 / 11, 64 bits)
+# numpy 2.1.3 : les versions 2.2 et suivantes ne se chargent pas sous Wine 9 (compilation sous Linux)
+numpy==2.1.3
+shapely==2.0.7
+ezdxf==1.4.5

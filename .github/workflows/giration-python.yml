@@ -1,0 +1,112 @@
+# Giration — portage Python (dossier giration-python/) : tests, puis application de bureau Windows 10/11.
+# Les fichiers produits se téléchargent dans l'onglet « Actions » du dépôt, rubrique « Artifacts ».
+# Publication d'une version (onglet « Releases ») avec ces fichiers et les notes de la section X.Y.Z de
+# giration-python/NOUVEAUTES.md : onglet Actions › ce workflow › « Run workflow » en cochant « publier »
+# (la version X.Y.Z est celle de giration-python/pyproject.toml), ou envoi d'une étiquette « python-vX.Y.Z ».
+# Si la version existe déjà, ses fichiers sont remplacés et ses notes mises à jour.
+# Les fichiers VB6 d'origine du CEREMA, à la racine du dépôt, ne sont pas concernés.
+name: Giration Python — tests et application Windows
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["python-v*"]
+    paths:
+      - "giration-python/**"
+      - ".github/workflows/giration-python.yml"
+  pull_request:
+    paths:
+      - "giration-python/**"
+  workflow_dispatch:
+    inputs:
+      publier:
+        description: "Publier la version de pyproject.toml dans Releases"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: giration-python
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Dépendances
+        # pyproj et pypdf servent seulement aux contrôles : projections contre PROJ, texte de la note PDF
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt pyproj pypdf
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+      - name: Application de bureau
+        run: |
+          pyinstaller --noconfirm --clean --distpath dist_dossier --workpath build_dossier giration_bureau_dossier.spec
+          Copy-Item LISEZMOI.txt, NOUVEAUTES.md dist_dossier/Giration/
+          $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          Compress-Archive -Path dist_dossier/Giration -DestinationPath "dist_dossier/Giration-$v-Windows.zip" -Force
+      - name: Auto-contrôle de l'exécutable
+        run: |
+          $env:GIRATION_AUTOTEST = "$PWD/autotest.txt"
+          Start-Process -FilePath dist_dossier/Giration/Giration.exe -Wait
+          $r = Get-Content autotest.txt -Raw
+          $r
+          if (-not ($r -match "ok calcul" -and $r -match "ok bordure")) { throw "Auto-contrôle non conforme" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Giration-Python-Windows
+          path: giration-python/dist_dossier/Giration-*-Windows.zip
+
+  publier:
+    if: startsWith(github.ref, 'refs/tags/python-v') || (github.event_name == 'workflow_dispatch' && inputs.publier)
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: Giration-Python-Windows
+          path: livraison
+      - name: Publier la version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/python-v* ]]; then
+            etiquette="$GITHUB_REF_NAME"
+          else
+            etiquette="python-v$(sed -n 's/^version = "\(.*\)"/\1/p' giration-python/pyproject.toml)"
+          fi
+          version="${etiquette#python-v}"
+          awk -v v="## $version" '$0 ~ "^## " { garder = (index($0, v) == 1) ; next } garder' \
+            giration-python/NOUVEAUTES.md > notes.md
+          {
+            echo "Portage Python de **Giration** (CERTU/CEREMA) pour Windows 10 et 11, sans installation : épures de"
+            echo "giration tracées sur la photo aérienne de l'IGN, export DXF (Lambert-93 ou CC) pour AutoCAD et COVADIS."
+            echo
+            echo "*L’intelligence artificielle au service de l’action publique efficiente.*"
+            echo
+            echo "Décompresser \`Giration-$version-Windows.zip\`, puis double-cliquer sur \`Giration.exe\`."
+            echo
+            echo "### Nouveautés"
+            cat notes.md
+            echo
+            echo "Exécutable non signé : au premier lancement, SmartScreen → *Informations complémentaires* → *Exécuter quand même*."
+            echo
+            echo "Licence GNU GPL v3, comme le code d'origine du CEREMA. Ce portage n'est ni édité ni validé par le CEREMA."
+          } > notes_completes.md
+          if gh release view "$etiquette" > /dev/null 2>&1; then
+            gh release upload "$etiquette" livraison/* --clobber
+            gh release edit "$etiquette" --notes-file notes_completes.md
+          else
+            gh release create "$etiquette" livraison/* --target "$GITHUB_SHA" --title "Giration Python $version" \
+              --notes-file notes_completes.md
+          fi
