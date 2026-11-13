@@ -1,6 +1,6 @@
 # Feuille de route de Giration
 
-Décisions de Yann Steffan (10 octobre 2026) :
+Décisions de YannFR81 (10 octobre 2026) :
 
 - application de bureau qui réutilise la carte de Girabase, sort le DXF et marche avec l'assistant d'IA ; une version web viendra plus tard ;
 - deux logiciels séparés, Girabase et Giration, avec un bouton pour passer de l'un à l'autre ;
